@@ -60,6 +60,6 @@
   "subscription_required": true,
   "free_subscription": false,
   "service_homepage": "https://www.eclecticiq.com",
-  "service_logo": { "path": "assets/logo_opencti.png", "caption": "logo" },
+  "service_logo": { "path": "assets/logo.png", "caption": "logo" },
   "screenshots": []
 }

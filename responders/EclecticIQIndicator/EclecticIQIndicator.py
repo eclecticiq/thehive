@@ -99,7 +99,7 @@ class EclecticIQIndicator(Responder):
             return max(value2, value1)
         return value1 or value2
 
-    def get_report(self, case_data, source_id):
+    def make_report(self, case_data, source_id):
         desc_fields = [
             ("title", "Case Title"),
             ("description", "Case Description"),
@@ -142,7 +142,7 @@ class EclecticIQIndicator(Responder):
         # deduplicate tags
         tags = list(set(tags))
 
-        _id = "{{https://thehive5.myorg/}}report-{}".format(
+        _id = "{{https://thehive-project.org}}report-{}".format(
             str(uuid.uuid5(uuid.NAMESPACE_X500, case_data.get("id")))
         )
 
@@ -170,7 +170,7 @@ class EclecticIQIndicator(Responder):
             report["data"]["confidence"] = dict(type="confidence", value=confidence)
         return report
 
-    def get_indicator(self, hive_data, source_id):
+    def make_indicator(self, hive_data, source_id):
         if not self.convert_eiq_observable_type(hive_data.get("dataType")):
             self.error("Unsupported IOC type")
             return None
@@ -206,7 +206,7 @@ class EclecticIQIndicator(Responder):
         # deduplicate tags
         tags = list(set(tags))
 
-        _id = "{{https://thehive5.myorg/}}indicator-{}".format(
+        _id = "{{https://thehive-project.org}}indicator-{}".format(
             str(uuid.uuid5(uuid.NAMESPACE_X500, hive_data["id"]))
         )
 
@@ -293,11 +293,11 @@ class EclecticIQIndicator(Responder):
                 self.error("Invalid Group name")
                 return
 
-            report = self.get_report(case_data, source_id)
+            report = self.make_report(case_data, source_id)
 
             indicator = None
             if _type == "case_artifact":
-                indicator = self.get_indicator(hive_data, source_id)
+                indicator = self.make_indicator(hive_data, source_id)
                 if not indicator:
                     self.error("Unsupported IOC type")
                     return
