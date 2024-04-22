@@ -5,11 +5,26 @@ from datetime import datetime
 from typing import Optional
 
 import requests
-import json
 import traceback
 import uuid
 
 from cortexutils.responder import Responder
+
+
+SEVERITY_MAP = {
+    1: "LOW",
+    2: "MEDIUM",
+    3: "HIGH",
+    4: "CRITICAL",
+}
+CONFIDENCE_MAP = {1: "Low", 2: "Medium", 3: "High", 4: "High"}
+DEFAULT_TAGS = ["Hive", "Cortex", "Responder"]
+TLP_PAP_MAP = {
+    0: "WHITE",
+    1: "GREEN",
+    2: "AMBER",
+    3: "RED",
+}
 
 
 class EclecticIQIndicator(Responder):
@@ -95,24 +110,9 @@ class EclecticIQIndicator(Responder):
             if case_data.get(field):
                 description += f"<p><strong>{title}:</strong> {case_data[field]}</p>"
 
-        # process tag data
-        tags = ["Hive", "Cortex", "Responder"]  # some default tags
-
-        case_tags = case_data.get("tags", None)
-        if case_tags is not None:
-            tags.extend(case_tags)
-
-        severity_map = {
-            1: "LOW",
-            2: "MEDIUM",
-            3: "HIGH",
-            4: "CRITICAL",
-        }
-
-        confidence_map = {1: "Low", 2: "Medium", 3: "High", 4: "High"}
-
-        confidence = confidence_map.get(case_data.get("severity"))
-        case_data["severity"] = severity_map.get(case_data.get("severity"))
+        tags = DEFAULT_TAGS.copy() + case_data.get("tags", [])
+        confidence = CONFIDENCE_MAP.get(case_data.get("severity"))
+        case_data["severity"] = SEVERITY_MAP.get(case_data.get("severity"))
 
         case_tag_fields = [
             ("caseId", "Case ID"),
@@ -130,20 +130,14 @@ class EclecticIQIndicator(Responder):
                 description += f"<p><strong>{title}:</strong> {value}</p>"
 
         # PROCESS TLP
-        tlp_pap_map = {
-            0: "WHITE",
-            1: "GREEN",
-            2: "AMBER",
-            3: "RED",
-        }
         case_tlp = case_data.get("tlp", None)
-        if case_tlp and tlp_pap_map.get(case_tlp):
-            case_tlp = tlp_pap_map[case_tlp]
+        if case_tlp and TLP_PAP_MAP.get(case_tlp):
+            case_tlp = TLP_PAP_MAP[case_tlp]
 
         # PROCESS PAP
         case_pap = case_data.get("pap", None)
-        if case_pap and tlp_pap_map.get(case_pap):
-            tags.append(f"PAP: {tlp_pap_map[case_pap]}")
+        if case_pap and TLP_PAP_MAP.get(case_pap):
+            tags.append(f"PAP: {TLP_PAP_MAP[case_pap]}")
 
         # deduplicate tags
         tags = list(set(tags))
@@ -183,9 +177,7 @@ class EclecticIQIndicator(Responder):
 
         ioc_value = hive_data.get("data", None)
         description = ""
-
-        # process tag data
-        tags = ["Hive", "Cortex", "Responder"]  # some default tags
+        tags = DEFAULT_TAGS.copy() + hive_data.get("tags", [])
 
         observable_type = hive_data.get("_type", None)
         if observable_type is not None:
@@ -197,28 +189,19 @@ class EclecticIQIndicator(Responder):
             tags.append("Observable ID: {}".format(observable_id))
             description += f"<p><strong>Observable ID:</strong> {observable_id}</p>"
 
-        tags.extend(hive_data.get("tags", []))
-
         sighted = hive_data.get("sighted", None)
         if sighted is True:
             tags.append("Sighted")
             description += f"<p><strong>Sighted:</strong> True</p>"
 
         # PROCESS TLP
-        tlp_pap_map = {
-            0: "WHITE",
-            1: "GREEN",
-            2: "AMBER",
-            3: "RED",
-        }
         tlp = hive_data.get("tlp", None)
-        tlp_color = tlp_pap_map.get(tlp, None) if tlp else None
+        tlp_color = TLP_PAP_MAP.get(tlp, None) if tlp else None
 
         # PROCESS PAP
-
         pap = hive_data.get("pap", None)
-        if pap and tlp_pap_map.get(pap):
-            tags.append(f"PAP: {tlp_pap_map[pap]}")
+        if pap and TLP_PAP_MAP.get(pap):
+            tags.append(f"PAP: {TLP_PAP_MAP[pap]}")
 
         # deduplicate tags
         tags = list(set(tags))
@@ -267,34 +250,32 @@ class EclecticIQIndicator(Responder):
         return response.json()["data"][0]["source"]
 
     def create_relation(self, entity_dict, source_id):
-        report_id, indicator_id = entity_dict.get("report"), entity_dict.get(
-            "indicator"
+        report_id = entity_dict.get("report")
+        indicator_id = entity_dict.get("indicator")
+        if not report_id or not indicator_id:
+            return None
+
+        relation_id = str(uuid.uuid5(uuid.NAMESPACE_X500, f"{report_id}-{indicator_id}"))
+        relationship = {
+            "data": [
+                {
+                    "id": relation_id,
+                    "data": {
+                        "source": report_id,
+                        "key": "reports",
+                        "target": indicator_id,
+                    },
+                    "sources": [source_id],
+                }
+            ]
+        }
+
+        response = requests.put(
+            self.eiq_host_url + "/api/v2/relationships",
+            json=relationship,
+            headers=self.headers,
         )
-
-        if report_id and indicator_id:
-            relation_id = str(
-                uuid.uuid5(uuid.NAMESPACE_X500, f"{report_id}-{indicator_id}")
-            )
-            relationship = {
-                "data": [
-                    {
-                        "id": relation_id,
-                        "data": {
-                            "source": report_id,
-                            "key": "reports",
-                            "target": indicator_id,
-                        },
-                        "sources": [source_id],
-                    }
-                ]
-            }
-
-            response = requests.put(
-                self.eiq_host_url + "/api/v2/relationships",
-                json=relationship,
-                headers=self.headers,
-            )
-            return response
+        return response
 
     def run(self):
         try:
@@ -304,13 +285,14 @@ class EclecticIQIndicator(Responder):
             _type = hive_data.get("_type")
             if _type not in ["case", "case_artifact"]:
                 self.error("Responder not supported")
+                # FIXME: should we return None here?
+            case_data = hive_data if _type == "case" else hive_data.get("case")
 
             source_id = self.get_group_source_id()
             if not source_id:
                 self.error("Invalid Group name")
                 return
 
-            case_data = hive_data if _type == "case" else hive_data.get("case")
             report = self.get_report(case_data, source_id)
 
             indicator = None
@@ -318,50 +300,56 @@ class EclecticIQIndicator(Responder):
                 indicator = self.get_indicator(hive_data, source_id)
                 if not indicator:
                     self.error("Unsupported IOC type")
-                    return None
+                    return
 
-            data = []
-            report and data.append(report)
-            indicator and data.append(indicator)
-
-            # case data contains parent case information
-            json_data = dict(data=data)
-
-            response = requests.put(
-                self.eiq_host_url + "/api/v2/entities",
-                json=json_data,
-                headers=self.headers,
-            )
-            if response.status_code not in [200, 201]:
-                self.error(f"While making the call, receiving {response.status_code}")
+            entities = self.submit_entities(report, indicator)
+            if not entities:
                 return
-
-            response = response.json()
             entity_ids = {
-                data["data"]["type"]: data["id"] for data in response.get("data", [])
+                data["data"]["type"]: data["id"] for data in entities.get("data", [])
             }
 
             relation_response = self.create_relation(entity_ids, source_id)
             if relation_response and relation_response.status_code not in [200, 201]:
                 self.error(
-                    f"While making the relationship, receiving status: {response.status_code}"
+                    f"While making the relationship, "
+                    f"receiving status: {relation_response.status_code}"
                 )
                 return
 
-            result = {"message": "Submitted to EclecticIQ Intelligence Center"}
-            if entity_ids.get("report"):
-                result["report_platform_link"] = (
-                    f"{self.eiq_host_url}/entity/{entity_ids.get('report')}"
-                )
-
-            if entity_ids.get("indicator"):
-                result["indicator_platform_link"] = (
-                    f"{self.eiq_host_url}/entity/{entity_ids.get('indicator')}"
-                )
-
-            self.report(result)
+            self.report_result(entity_ids)
         except Exception as ex:
             self.error("Error: {}: ex: {}".format(traceback.format_exc(), ex))
+
+    def submit_entities(self, report: dict, indicator: dict) -> Optional[dict]:
+        data = []
+        report and data.append(report)
+        indicator and data.append(indicator)
+        # case data contains parent case information
+        json_data = dict(data=data)
+        response = requests.put(
+            self.eiq_host_url + "/api/v2/entities",
+            json=json_data,
+            headers=self.headers,
+        )
+        if response.status_code not in [200, 201]:
+            self.error(f"While making the call, receiving {response.status_code}")
+            return None
+
+        return response.json()
+
+    def report_result(self, entity_ids: dict) -> None:
+        result = {"message": "Submitted to EclecticIQ Intelligence Center"}
+        if entity_ids.get("report"):
+            result["report_platform_link"] = (
+                f"{self.eiq_host_url}/entity/{entity_ids.get('report')}"
+            )
+
+        if entity_ids.get("indicator"):
+            result["indicator_platform_link"] = (
+                f"{self.eiq_host_url}/entity/{entity_ids.get('indicator')}"
+            )
+        self.report(result)
 
     def operations(self, raw):
         return [
